@@ -1,25 +1,19 @@
 """
 Vercel Serverless Function — POST /api/generate-audit
 Receives lead data from GHL webhook, generates a branded Missed Call Audit PDF,
-uploads it to Vercel Blob storage, and returns the public URL.
+uploads it to Vercel Blob storage, writes the PDF URL back to the GHL contact,
+and returns the public URL.
 
-Expected POST body (JSON):
-{
-    "company_name": "Bluewave Plumbing",
-    "first_name": "Mike",
-    "email": "mike@bluewave.com",        // optional, for future use
-    "phone": "6195551234",                // optional, for future use
-    "zip_code": "92101",
-    "service_type": "Plumbing",
-    "monthly_calls": "100-200"
-}
+GHL webhook sends standard contact data automatically. Custom Data keys map
+the fields we need. The contact_id comes in the standard payload.
 
 Returns:
 {
     "success": true,
     "pdf_url": "https://xxxxxxx.public.blob.vercel-storage.com/audit-bluewave-plumbing-xxxx.pdf",
     "company_name": "Bluewave Plumbing",
-    "annual_loss": "$84,240"
+    "annual_loss": "$84,240",
+    "ghl_updated": true
 }
 """
 
@@ -34,6 +28,9 @@ import hashlib
 # Add project root to path so we can import lib/
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from lib.pdf_generator import generate_audit_pdf, calculate_metrics, fmt_currency, MONTHLY_CALL_MAP, AVG_JOB_VALUES
+
+# GHL config
+GHL_CUSTOM_FIELD_KEY = "contact.audit_pdf_url"
 
 
 def upload_to_vercel_blob(pdf_bytes, filename):
@@ -60,6 +57,44 @@ def upload_to_vercel_blob(pdf_bytes, filename):
         return result.get("url", "")
 
 
+def update_ghl_contact(contact_id, pdf_url):
+    """Write the PDF URL back to the GHL contact's custom field via GHL API v2."""
+    api_key = os.environ.get("GHL_API_KEY")
+    if not api_key:
+        return {"error": "GHL_API_KEY not set"}
+
+    url = f"https://services.leadconnectorhq.com/contacts/{contact_id}"
+
+    payload = json.dumps({
+        "customFields": [
+            {
+                "key": GHL_CUSTOM_FIELD_KEY,
+                "value": pdf_url,
+            }
+        ]
+    }).encode("utf-8")
+
+    req = urllib.request.Request(
+        url,
+        data=payload,
+        method="PUT",
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+            "Version": "2021-07-28",
+        },
+    )
+
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            return json.loads(resp.read().decode())
+    except urllib.error.HTTPError as e:
+        error_body = e.read().decode() if e.fp else ""
+        return {"error": f"GHL API {e.code}: {error_body}"}
+    except Exception as e:
+        return {"error": str(e)}
+
+
 def slugify(text):
     """Simple slugify for filenames."""
     return text.lower().replace(" ", "-").replace("'", "").replace("&", "and")[:50]
@@ -73,12 +108,15 @@ class handler(BaseHTTPRequestHandler):
             body = self.rfile.read(content_length)
             data = json.loads(body.decode("utf-8"))
 
-            # Extract fields
+            # Extract fields — from GHL Custom Data key/value pairs
             company_name = data.get("company_name", "").strip()
             first_name = data.get("first_name", "").strip()
             zip_code = data.get("zip_code", "").strip()
             service_type = data.get("service_type", "Plumbing").strip()
             monthly_calls = data.get("monthly_calls", "100-200").strip()
+
+            # GHL standard payload includes contact_id
+            contact_id = data.get("contact_id", "").strip()
 
             # Validate required fields
             if not company_name:
@@ -112,17 +150,31 @@ class handler(BaseHTTPRequestHandler):
             # Upload to Vercel Blob
             pdf_url = upload_to_vercel_blob(pdf_bytes, filename)
 
+            # Write PDF URL back to GHL contact
+            ghl_updated = False
+            ghl_result = None
+            if contact_id:
+                ghl_result = update_ghl_contact(contact_id, pdf_url)
+                ghl_updated = "error" not in ghl_result
+
             # Calculate metrics for response
             metrics = calculate_metrics(monthly_calls, service_type)
 
             # Return success response
-            self._send_json(200, {
+            response = {
                 "success": True,
                 "pdf_url": pdf_url,
                 "company_name": company_name,
                 "annual_loss": fmt_currency(metrics["annual_loss"]),
                 "monthly_loss": fmt_currency(metrics["monthly_loss"]),
-            })
+                "ghl_updated": ghl_updated,
+            }
+
+            # Include GHL error info if update failed (for debugging)
+            if not ghl_updated and contact_id:
+                response["ghl_error"] = ghl_result
+
+            self._send_json(200, response)
 
         except json.JSONDecodeError:
             self._send_error(400, "Invalid JSON body")
