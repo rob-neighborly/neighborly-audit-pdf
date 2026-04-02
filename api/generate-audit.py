@@ -111,7 +111,7 @@ class handler(BaseHTTPRequestHandler):
             # Extract fields — from GHL Custom Data key/value pairs
             company_name = data.get("company_name", "").strip()
             first_name = data.get("first_name", "").strip()
-            zip_code = data.get("zip_code", "").strip()
+            zip_code = (data.get("zip_code") or data.get("postal_code") or "").strip()
             service_type = data.get("service_type", "Plumbing").strip()
             monthly_calls = data.get("monthly_calls", "100-200").strip()
 
