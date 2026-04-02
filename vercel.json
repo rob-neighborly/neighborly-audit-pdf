@@ -1,0 +1,14 @@
+{
+  "functions": {
+    "api/generate-audit.py": {
+      "runtime": "@vercel/python@4.3.1",
+      "maxDuration": 30
+    }
+  },
+  "routes": [
+    {
+      "src": "/api/generate-audit",
+      "dest": "/api/generate-audit.py"
+    }
+  ]
+}
