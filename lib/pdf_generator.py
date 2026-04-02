@@ -539,6 +539,13 @@ def draw_page_2(c, company_name, metrics):
     c.setFillColor(WHITE)
     c.drawString(btn_x + 20, btn_y + 9, btn_text)
 
+    # Make the button a clickable link
+    c.linkURL(
+        "https://neighborlyvoiceai.com/book-audit",
+        (btn_x, btn_y, btn_x + btn_w, btn_y + btn_h),
+        relative=0,
+    )
+
 
 # ═══════════════════════════════════════════
 #  PUBLIC API
