@@ -31,6 +31,7 @@ from lib.pdf_generator import generate_audit_pdf, calculate_metrics, fmt_currenc
 
 # GHL config
 GHL_CUSTOM_FIELD_KEY = "contact.audit_pdf_url"
+GHL_LOCATION_ID = "rlDo0jj658u3M8QpNnUa"
 
 
 def upload_to_vercel_blob(pdf_bytes, filename):
@@ -82,6 +83,7 @@ def update_ghl_contact(contact_id, pdf_url):
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
             "Version": "2021-07-28",
+            "Location": GHL_LOCATION_ID,
         },
     )
 
